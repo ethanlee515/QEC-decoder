@@ -8,6 +8,6 @@ name = "qecdec"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.25.0", features = ["extension-module"] }
-numpy = "0.25.0"
+pyo3 = { version = "0.25", features = ["extension-module"] }
+numpy = "0.25"
 ndarray = "0.15"

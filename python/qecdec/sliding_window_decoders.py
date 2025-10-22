@@ -1,4 +1,4 @@
-from .decoders import Decoder, MWPMDecoder, BPDecoder, DMemBPDecoder
+from .decoders import Decoder, MWPMDecoder, UnionFindDecoder, BPDecoder, DMemBPDecoder
 from .utils import ceil_div
 import numpy as np
 from functools import cached_property
@@ -207,7 +207,7 @@ class SlidingWindow_Decoder:
         Parameters
         ----------
             name : str
-                Name of the inner decoder. Options are "MWPM", "BP".
+                Name of the inner decoder. Options are "MWPM", "UF", "BP", "DMemBP".
 
             kwargs : dict
                 Keyword arguments for constructing the inner decoder. Peek into the file qecdec/decoders.py for more details.
@@ -221,6 +221,12 @@ class SlidingWindow_Decoder:
                     self.window_pcm, self.first_window_prior)
             self.last_inner_decoder = MWPMDecoder(
                 self.last_window_pcm, self.last_window_prior)
+        elif name == "UF":
+            if self.num_windows > 2:
+                self.inner_decoder = UnionFindDecoder(self.window_pcm)
+            if self.num_windows > 1:
+                self.first_inner_decoder = UnionFindDecoder(self.window_pcm)
+            self.last_inner_decoder = UnionFindDecoder(self.last_window_pcm)
         elif name == "BP":
             try:
                 max_iter: int = kwargs.pop("max_iter")
