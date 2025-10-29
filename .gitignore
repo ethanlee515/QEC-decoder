@@ -1,5 +1,6 @@
 .env/
 .github/
+.vscode/
 .DS_Store
 __pycache__/
 relay/
