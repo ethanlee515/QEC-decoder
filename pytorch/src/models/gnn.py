@@ -1,30 +1,31 @@
-# GNN architecture for QEC decoding:
-# Message passing on the Tanner graph (m CNs and n VNs).
-#
-# Notations:
-# - hc[i,t] is the hidden state of CN i at iteration t.
-# - hv[j,t] is the hidden state of VN j at iteration t.
-# - mcv[i,j,t] is the message from CN i to VN j at iteration t.
-# - mvc[j,i,t] is the message from VN j to CN i at iteration t.
-# - mc[i,t] is the aggregated message at CN i at iteration t.
-# - mv[j,t] is the aggregated message at VN j at iteration t.
-#
-# Initialization (t = 0): hc[i,0] = hv[j,0] = 0.
-#
-# In each iteration t (1 <= t <= T), the model executes the following steps:
-# 1. Calculate the messages:
-#    mcv[i,j,t] = MLP_CV(hc[i,t-1], hv[j,t-1])
-#    mvc[j,i,t] = MLP_VC(hc[i,t-1], hv[j,t-1])
-# 2. Aggregate the messages:
-#    mc[i,t] = sum(mvc[j,i,t] for j ∈ N(i))
-#    mv[j,t] = sum(mcv[i,j,t] for i ∈ N(j))
-# 3. Update the hidden states of the CNs and VNs:
-#    hc[i,t] = GRU_C0(mc[i,t], hc[i,t-1]) if synd[i] == 0
-#              GRU_C1(mc[i,t], hc[i,t-1]) if synd[i] == 1
-#    hv[j,t] = GRU_V(mv[j,t], hv[j,t-1])
-# where MLP_CV and MLP_VC are MLP networks, and GRU_C0, GRU_C1, and GRU_V are GRU cells.
-#
-# Final prediction: For each VN j, output llr[j] = Linear(hv[j,T]).
+'''GNN architecture for QEC decoding:
+Message passing on the Tanner graph.
+
+Notations:
+- hc[i,t] is the hidden state of CN i at iteration t.
+- hv[j,t] is the hidden state of VN j at iteration t.
+- mcv[i,j,t] is the message from CN i to VN j at iteration t.
+- mvc[j,i,t] is the message from VN j to CN i at iteration t.
+- mc[i,t] is the aggregated message at CN i at iteration t.
+- mv[j,t] is the aggregated message at VN j at iteration t.
+
+Initialization (t = 0): hc[i,0] = hv[j,0] = 0.
+
+In each iteration t (1 <= t <= T), the model executes the following steps:
+1. Calculate the messages:
+   mcv[i,j,t] = MLP_CV(hc[i,t-1], hv[j,t-1])
+   mvc[j,i,t] = MLP_VC(hc[i,t-1], hv[j,t-1])
+2. Aggregate the messages:
+   mc[i,t] = sum(mvc[j,i,t] for j ∈ N(i))
+   mv[j,t] = sum(mcv[i,j,t] for i ∈ N(j))
+3. Update the hidden states of the CNs and VNs:
+   hc[i,t] = GRU_C0(mc[i,t], hc[i,t-1]) if synd[i] == 0
+             GRU_C1(mc[i,t], hc[i,t-1]) if synd[i] == 1
+   hv[j,t] = GRU_V(mv[j,t], hv[j,t-1])
+where MLP_CV and MLP_VC are MLP networks, and GRU_C0, GRU_C1, and GRU_V are GRU cells.
+
+Final prediction: For each VN j, output llr[j] = Linear(hv[j,T]).
+'''
 
 import numpy as np
 import torch
@@ -34,6 +35,10 @@ FLOAT_DTYPE = torch.float32
 
 
 class MLP(nn.Module):
+    """
+    Multi-layer perceptron network.
+    """
+
     def __init__(
         self,
         in_features: int,
@@ -71,6 +76,10 @@ class MLP(nn.Module):
 
 
 class GNNDecoder(nn.Module):
+    """
+    Graph neural network-based decoder.
+    """
+
     def __init__(
         self,
         pcm: np.ndarray,
@@ -85,10 +94,9 @@ class GNNDecoder(nn.Module):
     ):
         super().__init__()
         assert isinstance(pcm, np.ndarray)
-        assert np.issubdtype(pcm.dtype, np.integer) or \
-            np.issubdtype(pcm.dtype, np.bool_)
+        assert np.issubdtype(pcm.dtype, np.integer) or np.issubdtype(pcm.dtype, np.bool_)
         assert pcm.ndim == 2
-
+        self.num_chks, self.num_vars = pcm.shape
         self.num_iters = num_iters
         self.node_features = node_features
         self.edge_features = edge_features
@@ -97,13 +105,12 @@ class GNNDecoder(nn.Module):
         self.mlp_dropout_p = mlp_dropout_p
         self.gru_dropout_p = gru_dropout_p
 
-        self.num_chks, self.num_vars = pcm.shape
-
+        # Register endpoints of the Tanner graph edges.
         # The i-th edge connects the CN chk_endpts[i] and the VN var_endpts[i].
         chk_endpts, var_endpts = np.nonzero(pcm)
-        self.chk_endpts = torch.tensor(chk_endpts, dtype=torch.long)
-        self.var_endpts = torch.tensor(var_endpts, dtype=torch.long)
         self.num_edges = len(chk_endpts)
+        self.register_buffer("chk_endpts", torch.as_tensor(chk_endpts, dtype=torch.long))  # (num_edges,)
+        self.register_buffer("var_endpts", torch.as_tensor(var_endpts, dtype=torch.long))  # (num_edges,)
 
         # Build MLP networks for message passing.
         # Input shape: (any, ..., 2 * node_features)
@@ -127,8 +134,7 @@ class GNNDecoder(nn.Module):
         # Input shape: (any, edge_features)
         # Hidden shape: (any, node_features)
         #
-        # Note: The hidden vector should not be dropped out before feeding it back to the GRU cell;
-        # dropout only applies when we pass the hidden vector to downstream layers (message passing and node prediction).
+        # Note: Dropout only applies when we pass the hidden vector to downstream layers (i.e., node prediction).
         self.gru_v = nn.GRUCell(
             edge_features, node_features, dtype=FLOAT_DTYPE)
         self.gru_c0 = nn.GRUCell(
@@ -158,9 +164,9 @@ class GNNDecoder(nn.Module):
         """
         device = syndromes.device
         batch_size = syndromes.shape[0]
-        synd_flat = syndromes.view(batch_size * self.num_chks)
-        mask0 = synd_flat == 0  # (batch_size * num_chks,), torch.bool
-        mask1 = synd_flat == 1  # (batch_size * num_chks,), torch.bool
+        syndromes_flat = syndromes.view(batch_size * self.num_chks)
+        mask0 = syndromes_flat == 0  # (batch_size * num_chks,), torch.bool
+        mask1 = syndromes_flat == 1  # (batch_size * num_chks,), torch.bool
 
         # A nested list that will store the LLR values for each VN at each iteration.
         # The outer list is indexed by VN, and the inner list is indexed by iteration.
@@ -173,10 +179,6 @@ class GNNDecoder(nn.Module):
             for _ in range(self.num_vars)
         ]
 
-        # Place edge endpoint tensors on the correct device.
-        chk_endpts = self.chk_endpts.to(device)
-        var_endpts = self.var_endpts.to(device)
-
         # Initialize hidden states to be all zeros at t=0
         hc = torch.zeros(batch_size, self.num_chks, self.node_features,
                          device=device, dtype=FLOAT_DTYPE)
@@ -186,21 +188,21 @@ class GNNDecoder(nn.Module):
         for t in range(self.num_iters):
             # Gather a pair of node features for each edge.
             paired_hc_hv = torch.cat([
-                torch.index_select(hc, dim=1, index=chk_endpts),
-                torch.index_select(hv, dim=1, index=var_endpts)
+                torch.index_select(hc, dim=1, index=self.chk_endpts),
+                torch.index_select(hv, dim=1, index=self.var_endpts)
             ], dim=-1)  # (batch_size, num_edges, 2 * node_features)
 
             # Calculate messages along edges in both directions using MLP networks.
-            mvc = self.mlp_msg_v2c(paired_hc_hv)  # (batch_size, num_edges, edge_features) # noqa: E501
-            mcv = self.mlp_msg_c2v(paired_hc_hv)  # (batch_size, num_edges, edge_features) # noqa: E501
+            mvc = self.mlp_msg_v2c(paired_hc_hv)  # (batch_size, num_edges, edge_features)
+            mcv = self.mlp_msg_c2v(paired_hc_hv)  # (batch_size, num_edges, edge_features)
 
             # Aggregate messages by summing over all incoming edges for each node.
             mv = torch.zeros(batch_size, self.num_vars, self.edge_features,
                              device=device, dtype=FLOAT_DTYPE)
-            mv.index_add_(1, var_endpts, mcv)  # mv[:, var_endpts[e], :] += mcv[:, e, :] for all edges e. # noqa: E501
+            mv.index_add_(1, self.var_endpts, mcv)  # mv[:, var_endpts[e], :] += mcv[:, e, :] for all edges e.
             mc = torch.zeros(batch_size, self.num_chks, self.edge_features,
                              device=device, dtype=FLOAT_DTYPE)
-            mc.index_add_(1, chk_endpts, mvc)  # mc[:, chk_endpts[e], :] += mvc[:, e, :] for all edges e. # noqa: E501
+            mc.index_add_(1, self.chk_endpts, mvc)  # mc[:, chk_endpts[e], :] += mvc[:, e, :] for all edges e.
 
             # Update variable node features using GRU cells.
             mv_flat = mv.view(batch_size * self.num_vars, self.edge_features)
@@ -231,3 +233,8 @@ class GNNDecoder(nn.Module):
             for j in range(self.num_vars)
         ]
         return var2llrs
+
+
+__all__ = [
+    "GNNDecoder",
+]
