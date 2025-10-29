@@ -2,7 +2,6 @@ from enum import Enum
 
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 
 EPS = 1e-6
@@ -15,7 +14,7 @@ class LossType(Enum):
     HYBRID = 2
 
 
-class IterativeDecodingLoss:  # TODO: do not inherit from nn.Module
+class IterativeDecodingLoss:
     """
     A PyTorch Module that implements a loss function for training iterative QEC decoders.
 
@@ -24,9 +23,9 @@ class IterativeDecodingLoss:  # TODO: do not inherit from nn.Module
     2. The second part quantifies how the estimated error pattern predicts the observable (i.e., is there a logical error?).
 
     More specifically, suppose we want to calculate the loss for a single shot (`llr`, `syndrome`, `observable`). The loss from part 1 is 
-    `loss1 = sum(loss_syn)`, where `loss_syn[i] = BCEWithLogitsLoss(-syndrome_pred_llr[i], syndrome[i])`, where `syndrome_pred_llr[i]` is the 
+    `loss1 = mean(loss_syn)`, where `loss_syn[i] = BCEWithLogitsLoss(-syndrome_pred_llr[i], syndrome[i])`, where `syndrome_pred_llr[i]` is the 
     LLR value of the `i`-th syndrome bit calculated from the LLR values of those error bits corresponding to the `i`-th row of `chkmat`. 
-    Similarly, the loss from part 2 is `loss2 = sum(loss_obs)`, where `loss_obs[i] = BCEWithLogitsLoss(-observable_pred_llr[i], observable[i])`, 
+    Similarly, the loss from part 2 is `loss2 = mean(loss_obs)`, where `loss_obs[i] = BCEWithLogitsLoss(-observable_pred_llr[i], observable[i])`, 
     where `observable_pred_llr[i]` is the LLR value of the `i`-th observable bit calculated from the LLR values of those error bits corresponding 
     to the `i`-th row of `obsmat`. Finally, the total loss is `loss = ß * loss1 + (1-ß) * loss2`, where `ß` ∈ [0,1] is a hyperparameter that 
     controls the relative importance of the two parts.
@@ -90,17 +89,15 @@ class IterativeDecodingLoss:  # TODO: do not inherit from nn.Module
 
     def forward(
         self,
-        var2llrs: list[torch.Tensor],
+        llrs: torch.Tensor,
         syndromes: torch.Tensor,
         observables: torch.Tensor
-    ) -> torch.Tensor:  # TODO: change input shape of var2llrs to (num_vars, batch_size, num_iters)
+    ) -> torch.Tensor:
         """
         Parameters
         ----------
-            var2llrs : list[torch.Tensor]
-                A Python list of tensors, one for each VN, that stores the posterior LLRs at all iterations. More 
-                specifically, `var2llrs[j]` is a tensor of shape (batch_size, num_iters), such that `var2llrs[j][:, t]` 
-                is the batch of posterior LLRs for VN `j` at iteration `t`.
+            llrs : torch.Tensor
+                LLR values at all iterations, shape=(num_iters, batch_size, num_vars), float
 
             syndromes : torch.Tensor
                 Syndrome bits ∈ {0,1}, shape=(batch_size, num_chks), int
@@ -114,83 +111,74 @@ class IterativeDecodingLoss:  # TODO: do not inherit from nn.Module
                 Loss, shape=(), float
         """
         if self.skip_iters > 0:
-            for j in range(self.num_vars):
-                var2llrs[j] = var2llrs[j][:, self.skip_iters:]
+            assert self.skip_iters < llrs.shape[0]
+            llrs = llrs[self.skip_iters:, :, :]
 
-        var2tanhhalfllrs = [
-            torch.tanh(var2llrs[j] / 2)  # (batch_size, num_iters)
-            for j in range(self.num_vars)
-        ]
+        tanhhalfllrs = torch.tanh(llrs / 2.)  # (num_iters, batch_size, num_vars)
+
+        # Unbind the third dimension to get a tuple of tensors, one for each VN.
+        # Each tensor has shape (num_iters, batch_size).
+        var2tanhhalfllrs = torch.unbind(tanhhalfllrs, dim=2)
 
         # Compute loss from two parts.
         if self.type != LossType.OBS_ONLY:
-            loss1 = self._get_syndrome_loss(
-                var2tanhhalfllrs, syndromes)  # (batch_size, num_iters)
+            loss1 = self._get_syndrome_loss(var2tanhhalfllrs, syndromes)  # (num_iters, batch_size)
         if self.type != LossType.SYND_ONLY:
-            loss2 = self._get_observable_loss(
-                var2tanhhalfllrs, observables)  # (batch_size, num_iters)
+            loss2 = self._get_observable_loss(var2tanhhalfllrs, observables)  # (num_iters, batch_size)
 
         # Compute total loss.
         if self.type == LossType.SYND_ONLY:
-            loss = loss1  # (batch_size, num_iters)
+            loss = loss1
         elif self.type == LossType.OBS_ONLY:
-            loss = loss2  # (batch_size, num_iters)
+            loss = loss2
         else:
-            loss = self.beta * loss1 + (1 - self.beta) * loss2  # (batch_size, num_iters)
+            loss = self.beta * loss1 + (1 - self.beta) * loss2
         return loss.mean()
 
     def _get_syndrome_loss(
         self,
-        var2tanhhalfllrs: list[torch.Tensor],  # list of num_vars tensors, each of shape (batch_size, num_iters)
+        var2tanhhalfllrs: tuple[torch.Tensor, ...],  # tuple of num_vars tensors, each of shape (num_iters, batch_size)
         syndromes: torch.Tensor  # (batch_size, num_chks), int, values ∈ {0,1}
     ) -> torch.Tensor:
-        syndromes = syndromes.to(FLOAT_DTYPE)
-
-        syndromes_pred_llr = []
+        synd_pred_llr = []
         for i in range(self.num_chks):
-            syndrome_i_pred_llr = 2 * (
-                torch.stack([var2tanhhalfllrs[j] for j in self.chk_supp[i]],
-                            dim=2)
+            synd_i_pred_llr = 2 * (
+                torch.stack([var2tanhhalfllrs[j] for j in self.chk_supp[i]], dim=2)
                 .prod(dim=2)
                 .clamp(min=-1 + EPS, max=1 - EPS)
                 .atanh()
-            )  # (batch_size, num_iters)
-            syndromes_pred_llr.append(syndrome_i_pred_llr)
-        syndromes_pred_llr = torch.stack(
-            syndromes_pred_llr, dim=2)  # (batch_size, num_iters, num_chks)
+            )  # (num_iters, batch_size)
+            synd_pred_llr.append(synd_i_pred_llr)
+        synd_pred_llr = torch.stack(synd_pred_llr, dim=2)  # (num_iters, batch_size, num_chks)
 
         loss = F.binary_cross_entropy_with_logits(
-            -syndromes_pred_llr,
-            syndromes.unsqueeze(dim=1).expand_as(syndromes_pred_llr),
+            -synd_pred_llr,
+            syndromes.to(FLOAT_DTYPE).unsqueeze(dim=0).expand_as(synd_pred_llr),
             reduction="none"
-        ).sum(dim=2)  # (batch_size, num_iters)
+        ).mean(dim=2)  # (num_iters, batch_size)
         return loss
 
     def _get_observable_loss(
         self,
-        var2tanhhalfllrs: list[torch.Tensor],  # list of num_vars tensors, each of shape (batch_size, num_iters)
+        var2tanhhalfllrs: tuple[torch.Tensor, ...],  # tuple of num_vars tensors, each of shape (num_iters, batch_size)
         observables: torch.Tensor  # (batch_size, num_obsers), int, values ∈ {0,1}
     ) -> torch.Tensor:
-        observables = observables.to(FLOAT_DTYPE)
-
-        observables_pred_llr = []
+        obs_pred_llr = []
         for i in range(self.num_obsers):
-            observable_i_pred_llr = 2 * (
-                torch.stack([var2tanhhalfllrs[j] for j in self.obs_supp[i]],
-                            dim=2)
+            obs_i_pred_llr = 2 * (
+                torch.stack([var2tanhhalfllrs[j] for j in self.obs_supp[i]], dim=2)
                 .prod(dim=2)
                 .clamp(min=-1 + EPS, max=1 - EPS)
                 .atanh()
-            )  # (batch_size, num_iters)
-            observables_pred_llr.append(observable_i_pred_llr)
-        observables_pred_llr = torch.stack(
-            observables_pred_llr, dim=2)  # (batch_size, num_iters, num_obsers)
+            )  # (num_iters, batch_size)
+            obs_pred_llr.append(obs_i_pred_llr)
+        obs_pred_llr = torch.stack(obs_pred_llr, dim=2)  # (num_iters, batch_size, num_obsers)
 
         loss = F.binary_cross_entropy_with_logits(
-            -observables_pred_llr,
-            observables.unsqueeze(dim=1).expand_as(observables_pred_llr),
+            -obs_pred_llr,
+            observables.to(FLOAT_DTYPE).unsqueeze(dim=0).expand_as(obs_pred_llr),
             reduction="none"
-        ).sum(dim=2)  # (batch_size, num_iters)
+        ).mean(dim=2)  # (num_iters, batch_size)
         return loss
 
 

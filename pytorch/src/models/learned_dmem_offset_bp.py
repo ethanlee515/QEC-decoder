@@ -132,24 +132,21 @@ class Learned_DMemOffsetBPDecoder(nn.Module):
 
         Returns
         -------
-            var2llrs : list[torch.Tensor]
-                A Python list of tensors, one for each VN, that stores the posterior LLRs at all BP iterations. More 
-                specifically, `var2llrs[j]` is a tensor of shape (batch_size, num_iters), such that `var2llrs[j][:, t]` 
-                is the batch of posterior LLRs for VN `j` at BP iteration `t`.
+            llrs : torch.Tensor
+                LLR values at all BP iterations, shape=(num_iters, batch_size, num_vars), 
         """
         device = syndromes.device
         batch_size = syndromes.shape[0]
         synd_sgn = (1 - 2 * syndromes).to(FLOAT_DTYPE)  # (batch_size, num_chks) ∈ {+1,-1}
 
         # A nested list that will store the posterior LLRs for each VN at each BP iteration.
-        # The outer list is indexed by VN, and the inner list is indexed by BP iteration.
-        # Each element will be a tensor of shape (batch_size,).
-        var2iter2llrs: list[list[torch.Tensor]] = [
+        # Each element is a tensor of shape (batch_size,).
+        iter2var2llrs: list[list[torch.Tensor]] = [
             [
                 None  # placeholder; will be a tensor of shape (batch_size,)
-                for _ in range(self.num_iters)
+                for _ in range(self.num_vars)
             ]
-            for _ in range(self.num_vars)
+            for _ in range(self.num_iters)
         ]
 
         # Initialize messages.
@@ -226,24 +223,23 @@ class Learned_DMemOffsetBPDecoder(nn.Module):
 
                 # Calculate posterior LLR at VN j for the current BP iteration.
                 if t == 0:
-                    var2iter2llrs[j][t] = incoming_sum + self.prior_llr[j]
+                    iter2var2llrs[t][j] = incoming_sum + self.prior_llr[j]
                 else:
-                    var2iter2llrs[j][t] = incoming_sum + \
+                    iter2var2llrs[t][j] = incoming_sum + \
                         (1 - self.gamma[j]) * self.prior_llr[j] + \
-                        self.gamma[j] * var2iter2llrs[j][t - 1]
+                        self.gamma[j] * iter2var2llrs[t - 1][j]
 
                 # Compute outgoing messages at VN j and update chk_inmsg.
                 if t < self.num_iters - 1:  # no need to update in the last iteration
                     for k, (i, pos) in enumerate(zip(self.var_nbrs[j], self.var_nbr_pos[j])):
-                        chk_inmsg[i][pos] = var2iter2llrs[j][t] - var_inmsg[j][k]
+                        chk_inmsg[i][pos] = iter2var2llrs[t][j] - var_inmsg[j][k]
 
-        # Convert the nested list var2iter2llrs into a list of tensors, one for each VN.
-        # Each tensor has shape (batch_size, num_iters).
-        var2llrs = [
-            torch.stack(var2iter2llrs[j], dim=1)
-            for j in range(self.num_vars)
-        ]
-        return var2llrs
+        # Convert the nested list iter2var2llrs into a tensor.
+        llrs = torch.stack([
+            torch.stack(iter2var2llrs[t], dim=1)
+            for t in range(self.num_iters)
+        ], dim=0)  # (num_iters, batch_size, num_vars)
+        return llrs
 
 
 __all__ = [

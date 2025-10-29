@@ -60,8 +60,7 @@ class MLP(nn.Module):
 
         # Additional hidden layers
         for _ in range(hidden_layers - 1):
-            layers.append(
-                nn.Linear(hidden_size, hidden_size, dtype=FLOAT_DTYPE))
+            layers.append(nn.Linear(hidden_size, hidden_size, dtype=FLOAT_DTYPE))
             layers.append(nn.ReLU())
             if dropout_p > 0:
                 layers.append(nn.Dropout(dropout_p))
@@ -135,12 +134,9 @@ class GNNDecoder(nn.Module):
         # Hidden shape: (any, node_features)
         #
         # Note: Dropout only applies when we pass the hidden vector to downstream layers (i.e., node prediction).
-        self.gru_v = nn.GRUCell(
-            edge_features, node_features, dtype=FLOAT_DTYPE)
-        self.gru_c0 = nn.GRUCell(
-            edge_features, node_features, dtype=FLOAT_DTYPE)
-        self.gru_c1 = nn.GRUCell(
-            edge_features, node_features, dtype=FLOAT_DTYPE)
+        self.gru_v = nn.GRUCell(edge_features, node_features, dtype=FLOAT_DTYPE)
+        self.gru_c0 = nn.GRUCell(edge_features, node_features, dtype=FLOAT_DTYPE)
+        self.gru_c1 = nn.GRUCell(edge_features, node_features, dtype=FLOAT_DTYPE)
         self.gru_dropout = nn.Dropout(gru_dropout_p)
 
         # Build prediction layers.
@@ -148,7 +144,7 @@ class GNNDecoder(nn.Module):
         # Output shape: (any, ..., 1)
         self.pred = nn.Linear(node_features, 1, dtype=FLOAT_DTYPE)
 
-    def forward(self, syndromes: torch.Tensor) -> list[torch.Tensor]:
+    def forward(self, syndromes: torch.Tensor) -> torch.Tensor:
         """
         Parameters
         ----------
@@ -157,27 +153,15 @@ class GNNDecoder(nn.Module):
 
         Returns
         -------
-            var2llrs : list[torch.Tensor]
-                A Python list of tensors, one for each VN, that stores the LLR values at all iterations. More 
-                specifically, `var2llrs[j]` is a tensor of shape (batch_size, num_iters), such that `var2llrs[j][:, t]` 
-                is the batch of LLR values for VN `j` at iteration `t`.
+            llrs : torch.Tensor
+                LLR values at all iterations, shape=(num_iters, batch_size, num_vars), float
         """
         device = syndromes.device
         batch_size = syndromes.shape[0]
         syndromes_flat = syndromes.view(batch_size * self.num_chks)
         mask0 = syndromes_flat == 0  # (batch_size * num_chks,), torch.bool
         mask1 = syndromes_flat == 1  # (batch_size * num_chks,), torch.bool
-
-        # A nested list that will store the LLR values for each VN at each iteration.
-        # The outer list is indexed by VN, and the inner list is indexed by iteration.
-        # Each element will be a tensor of shape (batch_size,).
-        var2iter2llrs: list[list[torch.Tensor]] = [
-            [
-                None  # placeholder; will be a tensor of shape (batch_size,)
-                for _ in range(self.num_iters)
-            ]
-            for _ in range(self.num_vars)
-        ]
+        llrs_per_iter: list[torch.Tensor] = []  # Each element will be a tensor of shape (batch_size, num_vars)
 
         # Initialize hidden states to be all zeros at t=0
         hc = torch.zeros(batch_size, self.num_chks, self.node_features,
@@ -185,7 +169,7 @@ class GNNDecoder(nn.Module):
         hv = torch.zeros(batch_size, self.num_vars, self.node_features,
                          device=device, dtype=FLOAT_DTYPE)
 
-        for t in range(self.num_iters):
+        for _ in range(self.num_iters):
             # Gather a pair of node features for each edge.
             paired_hc_hv = torch.cat([
                 torch.index_select(hc, dim=1, index=self.chk_endpts),
@@ -222,17 +206,12 @@ class GNNDecoder(nn.Module):
 
             # Prediction at variable nodes.
             hv_drop = self.gru_dropout(hv)
-            llrs = self.pred(hv_drop).squeeze(-1)  # (batch_size, num_vars)
-            for j, llr in enumerate(torch.unbind(llrs, dim=1)):
-                var2iter2llrs[j][t] = llr
+            llrs_per_iter.append(
+                self.pred(hv_drop).squeeze(-1)  # (batch_size, num_vars)
+            )
 
-        # Convert the nested list var2iter2llrs into a list of tensors, one for each VN.
-        # Each tensor has shape (batch_size, num_iters).
-        var2llrs = [
-            torch.stack(var2iter2llrs[j], dim=1)
-            for j in range(self.num_vars)
-        ]
-        return var2llrs
+        llrs = torch.stack(llrs_per_iter, dim=0)  # (num_iters, batch_size, num_vars)
+        return llrs
 
 
 __all__ = [
