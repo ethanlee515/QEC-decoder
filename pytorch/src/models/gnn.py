@@ -31,47 +31,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from ..utils.nn_utils import MLP
+
 FLOAT_DTYPE = torch.float32
-
-
-class MLP(nn.Module):
-    """
-    Multi-layer perceptron network.
-    """
-
-    def __init__(
-        self,
-        in_features: int,
-        out_features: int,
-        hidden_size: int,
-        hidden_layers: int,
-        dropout_p: float = 0.0,
-    ):
-        super().__init__()
-        assert hidden_layers >= 1
-
-        layers = []
-
-        # First hidden layer
-        layers.append(nn.Linear(in_features, hidden_size, dtype=FLOAT_DTYPE))
-        layers.append(nn.ReLU())
-        if dropout_p > 0:
-            layers.append(nn.Dropout(dropout_p))
-
-        # Additional hidden layers
-        for _ in range(hidden_layers - 1):
-            layers.append(nn.Linear(hidden_size, hidden_size, dtype=FLOAT_DTYPE))
-            layers.append(nn.ReLU())
-            if dropout_p > 0:
-                layers.append(nn.Dropout(dropout_p))
-
-        # Output layer
-        layers.append(nn.Linear(hidden_size, out_features, dtype=FLOAT_DTYPE))
-
-        self.model = nn.Sequential(*layers)
-
-    def forward(self, x):
-        return self.model(x)
 
 
 class GNNDecoder(nn.Module):
@@ -115,18 +77,16 @@ class GNNDecoder(nn.Module):
         # Input shape: (any, ..., 2 * node_features)
         # Output shape: (any, ..., edge_features)
         self.mlp_msg_v2c = MLP(
-            in_features=2 * self.node_features,
-            out_features=self.edge_features,
-            hidden_size=self.mlp_hidden_size,
-            hidden_layers=self.mlp_hidden_layers,
-            dropout_p=self.mlp_dropout_p,
+            2 * node_features, edge_features,
+            mlp_hidden_size, mlp_hidden_layers,
+            dropout_p=mlp_dropout_p,
+            dtype=FLOAT_DTYPE,
         )
         self.mlp_msg_c2v = MLP(
-            in_features=2 * self.node_features,
-            out_features=self.edge_features,
-            hidden_size=self.mlp_hidden_size,
-            hidden_layers=self.mlp_hidden_layers,
-            dropout_p=self.mlp_dropout_p,
+            2 * node_features, edge_features,
+            mlp_hidden_size, mlp_hidden_layers,
+            dropout_p=mlp_dropout_p,
+            dtype=FLOAT_DTYPE,
         )
 
         # Build GRU cells for node updates.
