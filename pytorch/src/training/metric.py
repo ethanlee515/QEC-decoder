@@ -94,8 +94,3 @@ class DecodingMetric(Metric):
             "wrong_observable_rate": self.wrong_observable.float() / self.total.float(),
             "failure_rate": self.wrong_either.float() / self.total.float(),
         }
-
-
-__all__ = [
-    "DecodingMetric",
-]

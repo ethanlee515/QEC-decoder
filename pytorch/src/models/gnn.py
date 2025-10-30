@@ -212,8 +212,3 @@ class GNNDecoder(nn.Module):
 
         llrs = torch.stack(llrs_per_iter, dim=0)  # (num_iters, batch_size, num_vars)
         return llrs
-
-
-__all__ = [
-    "GNNDecoder",
-]

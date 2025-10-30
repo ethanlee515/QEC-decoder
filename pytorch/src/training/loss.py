@@ -180,8 +180,3 @@ class IterativeDecodingLoss:
             reduction="none"
         ).mean(dim=2)  # (num_iters, batch_size)
         return loss
-
-
-__all__ = [
-    "IterativeDecodingLoss",
-]

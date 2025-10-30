@@ -38,8 +38,3 @@ class EarlyStopper:
 
     def check(self) -> bool:
         return self.early_stop
-
-
-__all__ = [
-    "EarlyStopper"
-]

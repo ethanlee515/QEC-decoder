@@ -68,7 +68,7 @@ class Learned_DMemOffsetBPDecoder(nn.Module):
         self.train_nf = train_nf
 
         if min_impl_method == "smooth":
-            from ..utils.tensor_ops import smooth_min
+            from ..utils.tensor_utils import smooth_min
             self.min_func = smooth_min
         elif min_impl_method == "hard":
             self.min_func = torch.amin
@@ -76,7 +76,7 @@ class Learned_DMemOffsetBPDecoder(nn.Module):
             raise ValueError(f"Invalid min_impl_method: {min_impl_method}")
 
         if sign_impl_method == "smooth":
-            from ..utils.tensor_ops import smooth_sign
+            from ..utils.tensor_utils import smooth_sign
             self.sign_func = smooth_sign
         elif sign_impl_method == "hard":
             self.sign_func = torch.sign
@@ -240,8 +240,3 @@ class Learned_DMemOffsetBPDecoder(nn.Module):
             for t in range(self.num_iters)
         ], dim=0)  # (num_iters, batch_size, num_vars)
         return llrs
-
-
-__all__ = [
-    "Learned_DMemOffsetBPDecoder",
-]
