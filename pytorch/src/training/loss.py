@@ -87,7 +87,7 @@ class IterativeDecodingLoss:
             for i in range(self.num_obsers)
         ]
 
-    def forward(
+    def __call__(
         self,
         llrs: torch.Tensor,
         syndromes: torch.Tensor,
