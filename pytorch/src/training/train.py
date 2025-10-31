@@ -1,4 +1,5 @@
 from typing import Optional
+from pathlib import Path
 
 from tqdm import tqdm
 import torch
@@ -21,6 +22,7 @@ def train_decoder(
     device: Optional[str] = None,
     lr_scheduler: Optional[ReduceLROnPlateau] = None,
     early_stopper: Optional[EarlyStopper] = None,
+    checkpoint_dir: Optional[str | Path] = None,
     progress_bar: bool = True,
 ):
     """
@@ -58,6 +60,9 @@ def train_decoder(
         early_stopper : EarlyStopper | None
             The early stopper. If None, do not use early stopping.
 
+        checkpoint_dir : str | Path | None
+            The directory to save/load checkpoints. If None, do not save/load checkpoints.
+
         progress_bar : bool
             Whether to show a progress bar.
     """
@@ -68,12 +73,33 @@ def train_decoder(
             device = "cpu"
     print(f"Using {device} device")
 
+    start_epoch = 0
+    if checkpoint_dir is not None:
+        if isinstance(checkpoint_dir, str):
+            checkpoint_dir = Path(checkpoint_dir)
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        checkpoint_file = checkpoint_dir / "last_checkpoint.pt"
+        best_model_file = checkpoint_dir / "best_model.pt"
+        # Load last checkpoint if it exists.
+        if checkpoint_file.exists():
+            print(f"Loading last checkpoint from {checkpoint_file}...")
+            chkpt = torch.load(checkpoint_file)
+            decoder.load_state_dict(chkpt["model_state_dict"])
+            optimizer.load_state_dict(chkpt["optimizer_state_dict"])
+            if lr_scheduler is not None:
+                lr_scheduler.load_state_dict(chkpt["lr_scheduler_state_dict"])
+            start_epoch = chkpt["epoch"] + 1
+            best_val_loss = chkpt["best_val_loss"]
+        else:
+            print("No checkpoint found, starting from scratch...")
+            best_val_loss = float('inf')
+
     decoder = decoder.to(device)
     metric = metric.to(device)
 
-    # Train model
-    for epoch in range(num_epochs):
-        # Training phase
+    # Train model.
+    for epoch in range(start_epoch, num_epochs):
+        # Training phase.
         decoder.train()
         running_loss = 0.0
         pbar = tqdm(
@@ -87,12 +113,12 @@ def train_decoder(
             observables = observables.to(device)
             optimizer.zero_grad()
 
-            # Forward pass
+            # Forward pass.
             llrs = decoder(syndromes)
             loss = loss_fn(llrs, syndromes, observables)
             running_loss += loss.item()
 
-            # Backpropagation
+            # Backpropagation.
             loss.backward()
             if progress_bar:
                 grad_norm = nn.utils.clip_grad_norm_(decoder.parameters(), max_norm=float('inf'))
@@ -103,7 +129,7 @@ def train_decoder(
             optimizer.step()
         avg_train_loss = running_loss / len(train_dataloader)
 
-        # Validation phase
+        # Validation phase.
         decoder.eval()
         metric.reset()
         running_loss = 0.0
@@ -120,11 +146,11 @@ def train_decoder(
         avg_val_loss = running_loss / len(val_dataloader)
         val_metrics = metric.compute()
 
-        # Learning rate scheduler
+        # Update learning rate scheduler.
         if lr_scheduler is not None:
             lr_scheduler.step(avg_val_loss)
 
-        # Print epoch summary
+        # Print epoch summary.
         print(f"Epoch {epoch+1} Summary:")
         print(f"  Avg Train Loss: {avg_train_loss:.6f}")
         print(f"  Avg Val Loss: {avg_val_loss:.6f}")
@@ -134,7 +160,24 @@ def train_decoder(
             print(f"  Learning Rate: {lr_scheduler.get_last_lr()[0]:.6f}")
         print()
 
-        # Early stopper
+        # Save best model.
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            torch.save(decoder.state_dict(), best_model_file)
+            print(f"New best model saved to {best_model_file}.")
+
+        # Save checkpoint.
+        if checkpoint_dir is not None:
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': decoder.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'lr_scheduler_state_dict': lr_scheduler.state_dict() if lr_scheduler is not None else None,
+                'best_val_loss': best_val_loss
+            }, checkpoint_file)
+            print(f"Checkpoint saved to {checkpoint_file}.")
+
+        # Update early stopper.
         if early_stopper is not None:
             early_stopper.update(avg_val_loss)
             if early_stopper.check():

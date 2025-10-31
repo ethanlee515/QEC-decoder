@@ -27,8 +27,8 @@ if __name__ == "__main__":
     # Set training parameters. # TODO: make config file
     num_epochs = 20
     batch_size = 256
-    decoder_kwargs = dict(num_iters=5, node_features=16, edge_features=16,
-                          mlp_hidden_size=16, mlp_hidden_layers=2,
+    decoder_kwargs = dict(num_iters=20, node_features=8, edge_features=8,
+                          mlp_hidden_size=8, mlp_hidden_layers=2,
                           mlp_dropout_p=0.05, gru_dropout_p=0.05)
     optimizer_kwargs = dict(lr=0.002)
     loss_fn_kwargs = dict(beta=0.8)
@@ -65,6 +65,8 @@ if __name__ == "__main__":
     early_stopper = EarlyStopper(**early_stopper_kwargs)
 
     # Train decoder.
+    checkpoint_dir = Path(__file__).resolve().parent.parent / "checkpoints" / "gnn" \
+        / "rotated_surface_code_memory_Z" / f"d={d}_rounds={rounds}_p={p}"
     train_decoder(
         decoder,
         train_dataloader,
@@ -76,8 +78,6 @@ if __name__ == "__main__":
         device="cpu",
         lr_scheduler=lr_scheduler,
         early_stopper=early_stopper,
+        checkpoint_dir=checkpoint_dir,
         progress_bar=True,
     )
-
-    # Save learned parameters.
-    # TODO: add checkpoint
