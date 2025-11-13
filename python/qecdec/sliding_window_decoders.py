@@ -181,6 +181,16 @@ class SlidingWindow_Decoder:
             raise ValueError("`prior` does not have the desired pattern.")
         return ret
 
+    @property
+    def num_checks(self) -> int:
+        """Number of check nodes."""
+        return self.rows_tot
+
+    @property
+    def num_variables(self) -> int:
+        """Number of variable nodes."""
+        return self.cols_tot
+
     @cached_property
     def pcm(self) -> np.ndarray:
         """

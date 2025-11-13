@@ -1,17 +1,18 @@
 import numpy as np
 import sinter
 from .decoders import Decoder
+from .sliding_window_decoders import SlidingWindow_Decoder
 
 
 class SinterDecoderWrapper(sinter.Decoder):
     """Wrap a Decoder object as a sinter.Decoder object, so that it can be used in sinter.collect.
     """
 
-    def __init__(self, decoder: Decoder, obsmat: np.ndarray):
+    def __init__(self, decoder: Decoder | SlidingWindow_Decoder, obsmat: np.ndarray):
         """
         Parameters
         ----------
-            decoder : Decoder
+            decoder : Decoder | SlidingWindow_Decoder
                 Decoder to be wrapped. Make sure that `decoder` is serializable by pickle (if not, you might want to customize 
                 the `decoder.__getstate__` and `decoder.__setstate__` methods).
 
