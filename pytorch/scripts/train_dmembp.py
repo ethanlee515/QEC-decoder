@@ -73,7 +73,7 @@ if __name__ == "__main__":
         metric,
         optimizer,
         num_epochs=num_epochs,
-        device="cpu",
+        # device="cpu",
         lr_scheduler=lr_scheduler,
         early_stopper=early_stopper,
         progress_bar=True,
