@@ -74,6 +74,8 @@ def train_decoder(
     print(f"Using {device} device")
 
     start_epoch = 0
+    best_val_loss = float("inf")  # <-- minimal fix #1
+
     if checkpoint_dir is not None:
         if isinstance(checkpoint_dir, str):
             checkpoint_dir = Path(checkpoint_dir)
@@ -92,7 +94,6 @@ def train_decoder(
             best_val_loss = chkpt["best_val_loss"]
         else:
             print("No checkpoint found, starting from scratch...")
-            best_val_loss = float('inf')
 
     decoder = decoder.to(device)
     metric = metric.to(device)
@@ -161,7 +162,7 @@ def train_decoder(
         print()
 
         # Save best model.
-        if avg_val_loss < best_val_loss:
+        if checkpoint_dir is not None and avg_val_loss < best_val_loss:  # <-- minimal fix #2
             best_val_loss = avg_val_loss
             torch.save(decoder.state_dict(), best_model_file)
             print(f"New best model saved to {best_model_file}.")

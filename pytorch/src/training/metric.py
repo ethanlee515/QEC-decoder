@@ -61,7 +61,9 @@ class DecodingMetric(Metric):
 
         # For each shot, check if the decoder converges, i.e., whether the syndrome is matched at any iteration
         hard_decisions = (llrs < 0).to(INT_DTYPE)  # (num_iters, batch_size, num_vars), int, 0/1
-        synd_pred = torch.matmul(hard_decisions, self.chkmat.T) % 2  # (num_iters, batch_size, num_chks), int, 0/1
+        # synd_pred = torch.matmul(hard_decisions, self.chkmat.T) % 2  # (num_iters, batch_size, num_chks), int, 0/1
+        # The above doesn't work on GPU
+        synd_pred = (hard_decisions.float() @ self.chkmat.T.float()).remainder(2).to(INT_DTYPE)
         synd_matched_mask = torch.all(synd_pred == syndromes.unsqueeze(dim=0), dim=2)  # (num_iters, batch_size), bool
         converged_mask = torch.any(synd_matched_mask, dim=0)  # (batch_size,), bool
 
@@ -79,7 +81,9 @@ class DecodingMetric(Metric):
         ehat = torch.gather(hard_decisions, dim=0, index=index).squeeze(0)  # (batch_size, num_vars), int, 0/1
 
         # For each shot, check if the decoder predicts the observables correctly
-        obs_pred = torch.matmul(ehat, self.obsmat.T) % 2  # (batch_size, num_obsers), int, 0/1
+        # obs_pred = torch.matmul(ehat, self.obsmat.T) % 2  # (batch_size, num_obsers), int, 0/1
+        # The above doesn't work on GPU.
+        obs_pred = (ehat.float() @ self.obsmat.T.float()).remainder(2).to(INT_DTYPE)
         obs_correct_mask = torch.all(obs_pred == observables, dim=1)  # (batch_size,), bool
 
         # Update states
