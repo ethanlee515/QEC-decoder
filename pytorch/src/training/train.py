@@ -102,7 +102,7 @@ def train_decoder(
     for epoch in range(start_epoch, num_epochs):
         # Training phase.
         decoder.train()
-        running_loss = 0.0
+        running_loss = torch.zeros((), device=device)
         pbar = tqdm(
             train_dataloader,
             desc=f"Epoch {epoch+1}/{num_epochs}",
@@ -117,23 +117,17 @@ def train_decoder(
             # Forward pass.
             llrs = decoder(syndromes)
             loss = loss_fn(llrs, syndromes, observables)
-            running_loss += loss.item()
+            running_loss += loss.detach()
 
             # Backpropagation.
             loss.backward()
-            if progress_bar:
-                grad_norm = nn.utils.clip_grad_norm_(decoder.parameters(), max_norm=float('inf'))
-                pbar.set_postfix({
-                    "avg_loss": f"{running_loss / (pbar.n + 1):.6f}",
-                    "grad_norm": f"{grad_norm:.6f}"
-                })
             optimizer.step()
-        avg_train_loss = running_loss / len(train_dataloader)
+        avg_train_loss = (running_loss / len(train_dataloader)).item()
 
         # Validation phase.
         decoder.eval()
         metric.reset()
-        running_loss = 0.0
+        running_loss = torch.zeros((), device=device)
         with torch.no_grad():
             for syndromes, observables in val_dataloader:
                 syndromes = syndromes.to(device)
@@ -142,9 +136,9 @@ def train_decoder(
                 # Forward pass
                 llrs = decoder(syndromes)
                 loss = loss_fn(llrs, syndromes, observables)
-                running_loss += loss.item()
+                running_loss += loss.detach()
                 metric.update(llrs, syndromes, observables)
-        avg_val_loss = running_loss / len(val_dataloader)
+        avg_val_loss = (running_loss / len(val_dataloader)).item()
         val_metrics = metric.compute()
 
         # Update learning rate scheduler.
