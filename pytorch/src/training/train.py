@@ -145,22 +145,24 @@ def train_decoder(
         if lr_scheduler is not None:
             lr_scheduler.step(avg_val_loss)
 
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            # Save best model.
+            if checkpoint_dir is not None:
+                torch.save(decoder.state_dict(), best_model_file)
+                print(f"New best model saved to {best_model_file}.")
+
         # Print epoch summary.
         print(f"Epoch {epoch+1} Summary:")
         print(f"  Avg Train Loss: {avg_train_loss:.6f}")
         print(f"  Avg Val Loss: {avg_val_loss:.6f}")
+        print(f"  Best Val Loss: {best_val_loss:.6f}")
         for key, value in val_metrics.items():
             print(f"  {key}: {value:.6f}")
         if lr_scheduler is not None:
             print(f"  Learning Rate: {lr_scheduler.get_last_lr()[0]:.6f}")
         print()
-
-        # Save best model.
-        if checkpoint_dir is not None and avg_val_loss < best_val_loss:  # <-- minimal fix #2
-            best_val_loss = avg_val_loss
-            torch.save(decoder.state_dict(), best_model_file)
-            print(f"New best model saved to {best_model_file}.")
-
+        
         # Save checkpoint.
         if checkpoint_dir is not None:
             torch.save({
