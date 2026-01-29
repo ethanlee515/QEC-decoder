@@ -30,9 +30,10 @@ class Learned_HighDimBPDecoder(nn.Module):
     Learned high-dimensional message passing on a fixed Tanner graph.
 
     - Edge messages are vectors in R^d.
-    - Each check node i has its own MLP: (deg_i * d) -> (deg_i * d).
-    - Each variable node j has its own MLP:
-          (deg_j * d + 1) -> (deg_j * d + 1),
+    - Check node update MLP is shared by check-degree:
+          (deg * d) -> (deg * d)
+    - Variable node update MLP is shared by var-degree:
+          (deg * d + 1) -> (deg * d + 1),
       where the extra scalar is the LLR.
     """
 
@@ -71,21 +72,29 @@ class Learned_HighDimBPDecoder(nn.Module):
 
         d = msg_dim
 
-        # Per-check-node MLPs
-        self.chk_mlps = nn.ModuleList()
-        for i in range(self.num_chks):
-            deg = len(self.chk_nbrs[i])
-            self.chk_mlps.append(
-                _NodeMLP(deg * d, deg * d, hidden_mult)
-            )
+        # ----------------------------
+        # Degree-shared MLPs
+        # ----------------------------
+        chk_degs = sorted({len(self.chk_nbrs[i]) for i in range(self.num_chks)})
+        var_degs = sorted({len(self.var_nbrs[j]) for j in range(self.num_vars)})
 
-        # Per-variable-node MLPs (+1 for LLR)
-        self.var_mlps = nn.ModuleList()
-        for j in range(self.num_vars):
-            deg = len(self.var_nbrs[j])
-            self.var_mlps.append(
-                _NodeMLP(deg * d + 1, deg * d + 1, hidden_mult)
-            )
+        # Keep for debugging / inspection
+        self.chk_degs = chk_degs
+        self.var_degs = var_degs
+
+        # One MLP per check degree
+        self.chk_mlp_by_deg = nn.ModuleDict()
+        for deg in chk_degs:
+            if deg == 0:
+                continue
+            self.chk_mlp_by_deg[str(deg)] = _NodeMLP(deg * d, deg * d, hidden_mult)
+
+        # One MLP per variable degree (+1 for LLR)
+        self.var_mlp_by_deg = nn.ModuleDict()
+        for deg in var_degs:
+            if deg == 0:
+                continue
+            self.var_mlp_by_deg[str(deg)] = _NodeMLP(deg * d + 1, deg * d + 1, hidden_mult)
 
     def _init_edge_message(
         self,
@@ -149,8 +158,10 @@ class Learned_HighDimBPDecoder(nn.Module):
                 if deg == 0:
                     continue
 
+                mlp = self.chk_mlp_by_deg[str(deg)]
+
                 x = torch.stack(chk_inmsg[i], dim=1).reshape(batch_size, deg * d)
-                y = self.chk_mlps[i](x).reshape(batch_size, deg, d)
+                y = mlp(x).reshape(batch_size, deg, d)
                 y = y * synd_sgn[:, i].view(batch_size, 1, 1)
 
                 for k, (j, pos) in enumerate(
@@ -165,11 +176,13 @@ class Learned_HighDimBPDecoder(nn.Module):
                     iter_llrs[t, :, j] = self.prior_llr[j]
                     continue
 
+                mlp = self.var_mlp_by_deg[str(deg)]
+
                 inc = torch.stack(var_inmsg[j], dim=1).reshape(batch_size, deg * d)
                 prior_j = self.prior_llr[j].expand(batch_size).unsqueeze(1)
                 x = torch.cat([inc, prior_j], dim=1)
 
-                y = self.var_mlps[j](x)
+                y = mlp(x)
                 msg_block = y[:, : deg * d].reshape(batch_size, deg, d)
                 llr = y[:, deg * d]
 
