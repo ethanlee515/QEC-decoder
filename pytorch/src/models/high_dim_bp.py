@@ -31,7 +31,8 @@ class Learned_HighDimBPDecoder(nn.Module):
 
     - Edge messages are vectors in R^d.
     - Check node update MLP is shared by check-degree:
-          (deg * d) -> (deg * d)
+          (deg * d + 1) -> (deg * d),
+      where the extra scalar is the check syndrome (encoded as ±1).
     - Variable node update MLP is shared by var-degree:
           (deg * d + 1) -> (deg * d + 1),
       where the extra scalar is the LLR.
@@ -69,6 +70,8 @@ class Learned_HighDimBPDecoder(nn.Module):
             "prior_llr",
             torch.as_tensor(prior_llr, dtype=FLOAT_DTYPE),
         )
+        # Silences Pylance nonsense
+        self.prior_llr: torch.Tensor
 
         d = msg_dim
 
@@ -82,12 +85,12 @@ class Learned_HighDimBPDecoder(nn.Module):
         self.chk_degs = chk_degs
         self.var_degs = var_degs
 
-        # One MLP per check degree
+        # One MLP per check degree (+1 for syndrome feature)
         self.chk_mlp_by_deg = nn.ModuleDict()
         for deg in chk_degs:
             if deg == 0:
                 continue
-            self.chk_mlp_by_deg[str(deg)] = _NodeMLP(deg * d, deg * d, hidden_mult)
+            self.chk_mlp_by_deg[str(deg)] = _NodeMLP(deg * d + 1, deg * d, hidden_mult)
 
         # One MLP per variable degree (+1 for LLR)
         self.var_mlp_by_deg = nn.ModuleDict()
@@ -127,7 +130,7 @@ class Learned_HighDimBPDecoder(nn.Module):
         batch_size = syndromes.shape[0]
         d = self.msg_dim
 
-        synd_sgn = (1 - 2 * syndromes).to(FLOAT_DTYPE)  # (B, M)
+        synd_sgn = (1 - 2 * syndromes).to(FLOAT_DTYPE)  # (B, M) in {+1,-1}
 
         iter_llrs = torch.empty(
             (T, batch_size, self.num_vars),
@@ -161,7 +164,10 @@ class Learned_HighDimBPDecoder(nn.Module):
                 mlp = self.chk_mlp_by_deg[str(deg)]
 
                 x = torch.stack(chk_inmsg[i], dim=1).reshape(batch_size, deg * d)
+                s_i = synd_sgn[:, i].unsqueeze(1)  # (B, 1), in {+1,-1}
+                x = torch.cat([x, s_i], dim=1)  # (B, deg*d + 1)
                 y = mlp(x).reshape(batch_size, deg, d)
+                # Keep BP-style sign flip as an easy inductive bias
                 y = y * synd_sgn[:, i].view(batch_size, 1, 1)
 
                 for k, (j, pos) in enumerate(

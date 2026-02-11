@@ -11,3 +11,4 @@ scratch.ipynb
 pytorch/runs/
 pytorch/datasets/
 pytorch/checkpoints/
+*.pyd

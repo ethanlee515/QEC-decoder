@@ -7,7 +7,7 @@ if __name__ == "__main__":
     sys.path.append(str(Path(__file__).resolve().parent.parent))
     from src.dataset.dataset_builder import build_decoding_datasets
 
-    d_list = [5, 7, 9, 11]
+    d_list = [5, 7, 9]
     p = 0.01
 
     data_dir = Path(__file__).resolve().parent.parent / "datasets" / "rotated_surface_code_memory_Z"
