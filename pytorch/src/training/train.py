@@ -66,9 +66,10 @@ def train_decoder(
         progress_bar : bool
             Whether to show a progress bar.
     """
+
     if device is None:
-        if torch.accelerator.is_available():
-            device = torch.accelerator.current_accelerator().type
+        if torch.cuda.is_available():
+            device = "cuda"
         else:
             device = "cpu"
     print(f"Using {device} device")
